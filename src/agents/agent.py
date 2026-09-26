@@ -76,15 +76,15 @@ def create_red_agent_default():
         return agent, runner
 
     if red_uses_gemini():
-        from google.adk.agents import llm_agent
-        from google.adk import runners
+        from core.gemini_runtime import create_gemini_pair
 
-        agent = llm_agent.LlmAgent(
-            model=soft,
+        agent, runner = create_gemini_pair(
             name="red_agent_default",
             instruction=RED_DEFAULT_INSTRUCTION,
+            app_name="red_agent_default",
+            model=soft,
+            temperature=0.7,
         )
-        runner = runners.InMemoryRunner(agent=agent, app_name="red_agent_default")
         print(
             f"Red created — NO guardrails! "
             f"[Red:{red_provider_label('default')}]"

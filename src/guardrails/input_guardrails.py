@@ -11,6 +11,7 @@ Status convention (không dùng True/False mơ hồ):
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Literal
 
 from google.genai import types
@@ -51,14 +52,28 @@ def detect_injection(user_input: str) -> InputStatus:
     Returns:
         ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
     """
-    INJECTION_PATTERNS = [
-        # TODO: Add at least 5 regex patterns
-        # Example:
-        # r"ignore (all )?(previous|above) instructions",
+    injection_patterns = [
+        r"ignore\s+(?:all\s+)?(?:previous|above|prior)\s+instructions?",
+        r"disregard\s+(?:all\s+)?(?:previous|above|prior)\s+(?:instructions?|rules?)",
+        r"\byou\s+are\s+now\b",
+        r"\bsystem\s+prompt\b",
+        r"\breveal\s+(?:your\s+)?(?:instructions?|prompt|secrets?)\b",
+        r"\bpretend\s+(?:you\s+are|to\s+be)\b",
+        r"\bact\s+as\s+(?:a\s+|an\s+)?(?:unrestricted|jailbroken|evil)\b",
+        r"\b(?:show|output|translate)\s+(?:me\s+)?(?:your\s+)?(?:instructions?|prompt|config)\b",
+        r"\bforget\s+(?:all\s+|your\s+)?(?:instructions?|rules?)\b",
     ]
 
-    for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, user_input, re.IGNORECASE):
+    # NFKC folds compatibility characters. Category Cf contains zero-width and
+    # direction-control characters commonly used to split security keywords.
+    normalized = unicodedata.normalize("NFKC", str(user_input or ""))
+    normalized = "".join(
+        char for char in normalized if unicodedata.category(char) != "Cf"
+    )
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    for pattern in injection_patterns:
+        if re.search(pattern, normalized, re.IGNORECASE):
             return "BLOCK"
     return "ALLOW"
 
@@ -84,14 +99,23 @@ def topic_filter(user_input: str) -> InputStatus:
         ``"BLOCK"`` = chặn (off-topic hoặc topic cấm).
         ``"ALLOW"`` = cho qua (câu banking hợp lệ).
     """
-    input_lower = user_input.lower()
+    input_lower = unicodedata.normalize("NFKC", str(user_input or "")).casefold()
 
     # TODO: Implement logic:
     # 1. If input contains any blocked topic -> return "BLOCK"
     # 2. If input doesn't contain any allowed topic -> return "BLOCK"
     # 3. Otherwise -> return "ALLOW"
 
-    pass  # Replace with your implementation
+    def contains_topic(topic: str) -> bool:
+        return re.search(
+            rf"(?<!\w){re.escape(topic.casefold())}(?!\w)", input_lower
+        ) is not None
+
+    if any(contains_topic(topic) for topic in BLOCKED_TOPICS):
+        return "BLOCK"
+    if not any(contains_topic(topic) for topic in ALLOWED_TOPICS):
+        return "BLOCK"
+    return "ALLOW"
 
 
 # ============================================================
@@ -151,7 +175,17 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         #    - If "BLOCK": increment blocked_count, return self._block_response("...")
         # 3. If both return "ALLOW": return None (let message through)
 
-        pass  # Replace with your implementation
+        if detect_injection(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "I cannot process instructions that attempt to override system rules."
+            )
+        if topic_filter(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "I can only help with VinBank banking-related questions."
+            )
+        return None
 
 
 # ============================================================

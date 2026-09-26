@@ -7,6 +7,8 @@ other layers catch attacks; this layer makes them reviewable.
 from __future__ import annotations
 
 import json
+import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,10 +26,21 @@ class AuditLogPlugin:
         self.name = "audit_log"
         self.logs: list[dict] = []
         self._open: dict[str, float] = {}
+        self._latest_by_user: dict[str, str] = {}
 
     def record_input(self, *, user_id: str, text: str, request_id: str | None = None):
-        """TODO: store input + start timestamp keyed by request_id/user_id."""
-        raise NotImplementedError("Implement AuditLogPlugin.record_input")
+        """Store request metadata and return its correlation ID."""
+        correlation_id = request_id or uuid.uuid4().hex
+        self._open[correlation_id] = time.perf_counter()
+        self._latest_by_user[user_id] = correlation_id
+        self.logs.append({
+            "request_id": correlation_id,
+            "user_id": user_id,
+            "input": text,
+            "started_at": utc_now_iso(),
+            "status": "started",
+        })
+        return correlation_id
 
     def record_output(
         self,
@@ -38,15 +51,43 @@ class AuditLogPlugin:
         layer: str | None = None,
         request_id: str | None = None,
     ):
-        """TODO: store output, layer decision, latency; append to self.logs."""
-        raise NotImplementedError("Implement AuditLogPlugin.record_output")
+        """Finish a request entry with its decision and elapsed time."""
+        correlation_id = request_id or self._latest_by_user.pop(user_id, user_id)
+        if request_id and self._latest_by_user.get(user_id) == request_id:
+            self._latest_by_user.pop(user_id, None)
+        started = self._open.pop(correlation_id, None)
+        latency_ms = round((time.perf_counter() - started) * 1000, 3) if started else 0.0
+        entry = next(
+            (row for row in reversed(self.logs)
+             if row.get("request_id") == correlation_id and row.get("status") == "started"),
+            None,
+        )
+        if entry is None:
+            entry = {
+                "request_id": correlation_id,
+                "user_id": user_id,
+                "input": None,
+                "started_at": utc_now_iso(),
+            }
+            self.logs.append(entry)
+        entry.update({
+            "output": text,
+            "blocked": bool(blocked),
+            "layer": layer,
+            "latency_ms": latency_ms,
+            "completed_at": utc_now_iso(),
+            "status": "completed",
+        })
+        return entry
 
     def export_json(self, filepath: str | None = None):
         """Write logs to disk (JSON array) under repo-root ``outputs/`` by default."""
-        # TODO: path = filepath or default_audit_log_path()
-        #       ensure parent dirs exist, dump self.logs with indent=2
-        _ = filepath or default_audit_log_path()
-        raise NotImplementedError("Implement AuditLogPlugin.export_json")
+        path = Path(filepath or default_audit_log_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(self.logs, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return path
 
 
 def utc_now_iso() -> str:

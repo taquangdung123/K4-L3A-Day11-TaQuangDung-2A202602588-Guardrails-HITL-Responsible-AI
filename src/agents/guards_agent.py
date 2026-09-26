@@ -280,14 +280,15 @@ def create_red_agent_advance():
         return agent, runner
 
     if red_uses_gemini():
-        plugins = [GuardsInputPlugin(), GuardsOutputPlugin()]
-        agent = llm_agent.LlmAgent(
-            model=advance_model,
+        from core.gemini_runtime import create_gemini_pair
+
+        agent, runner = create_gemini_pair(
             name="red_agent_advance",
             instruction=RED_ADVANCE_INSTRUCTION,
-        )
-        runner = runners.InMemoryRunner(
-            agent=agent, app_name="red_agent_advance", plugins=plugins
+            app_name="red_agent_advance",
+            model=advance_model,
+            input_hooks=[_input_hook],
+            output_hooks=[_output_hook],
         )
         print(
             f"Red Advance created — STRONG guardrails "
